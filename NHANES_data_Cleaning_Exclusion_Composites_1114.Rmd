@@ -1,0 +1,1968 @@
+---
+title: "Choline and iron: NHANES data"
+author: "I. Ray and M. J. Wenger"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    df_print: kable
+    theme: cerulean
+---
+
+```{r setup, include = FALSE, echo = FALSE}
+# 
+# Assessment of choline intake, iron levels, and assessment of cognitive status
+# in a sample of individuals 60+ in the NHANES data sets on cognitive aging:
+#
+# https://www.cdc.gov/healthy-aging-data/nhanes/index.html
+#
+# 01 Jan 2024 work on initial version begins
+# 21 Apr 2025 example code snippet for Ishani Ray
+# 02 Jul 2025 converted to an Rmarkdown script
+#
+```
+
+
+```{r merge and deduplicate data, include=FALSE, echo = FALSE, warning = FALSE}
+
+# clear all variables from the environment
+rm(list = ls()) 
+
+# Load  libraries and set options
+knitr::opts_chunk$set(echo = FALSE)
+library(haven)
+library(knitr)
+library(kableExtra)
+library(tibble)
+library(dplyr)
+library(rlang)
+library(tidyverse)
+library(dplyr)
+library(purrr)
+library(nortest)
+library(moments)
+
+# make sure we're in the right directory
+#setwd("/Volumes/ouvnl/mjwenger/choline\ and\ iron/nhanes") # Mac version
+# Set working directory for Windows
+#setwd("Z:\\choline and iron\\nhanes")  # Use double backslashes in R
+
+#--- DATA EXTRACTION AND RENAMING--- 
+
+#xpt_prefix <- "xpt_files/" # Mac version
+#xpt_suffix <- ".xpt"
+
+xpt_prefix <- "xpt_files\\"  # Folder within working directory
+xpt_suffix <- ".xpt"
+
+# --cognitive data --
+cog11_fn <- paste(xpt_prefix, "CFQ_G", xpt_suffix, sep = "") # cog status data, 2011-2012
+cog11_data <- read_xpt(cog11_fn)
+cog13_fn <- paste(xpt_prefix, "CFQ_H", xpt_suffix, sep = "") # cog status data, 2013-2014
+cog13_data <- read_xpt(cog13_fn)
+cog_all <- rbind(cog11_data, cog13_data) # combined
+
+retain_cogvars <- c("SEQN", "CFASTAT", "CFALANG", "CFDCST1", "CFDCST2", "CFDCST3", "CFDCSR", "CFDCIT1", "CFDCIT2", 
+                    "CFDCIT3", "CFDCIR", "CFDAST", "CFDDS") # cognitive variables to retain
+cog_all <- cog_all[retain_cogvars]
+cog_all <- setNames(cog_all, c("ID", "cog_status", "cog_lang", 
+                                 "imm_rcl1", "imm_rcl2", "imm_rcl3", "del_rcl", 
+                                 "intrusn1", "intrusn2", "intrusn3", "intrusn_del", 
+                                 "anim_flu", "dig_sym"))
+
+# --CBC data--
+cbc11_fn <- paste(xpt_prefix, "CBC_G", xpt_suffix, sep = "")
+cbc11_data <- read_xpt(cbc11_fn)
+cbc13_fn <- paste(xpt_prefix, "CBC_H", xpt_suffix, sep = "")
+cbc13_data <- read_xpt(cbc13_fn)
+cbc_all <- rbind(cbc11_data, cbc13_data)
+
+retain_cbcvars <- c("SEQN", "LBXRBCSI", "LBXHGB", "LBXHCT", "LBXMCHSI", "LBXMC", "LBXRDW") # CBC variables to retain
+cbc_all <- cbc_all[retain_cbcvars]
+cbc_all <- setNames(cbc_all, c("ID", "RBC", "Hb", "Hct", "MCH", "MCHC", "RBC_DW"))
+
+# --biochemistry data--
+biopro11_fn <- paste(xpt_prefix, "BIOPRO_G", xpt_suffix, sep = "")
+biopro11_data <- read_xpt(biopro11_fn)
+biopro13_fn <- paste(xpt_prefix, "BIOPRO_H", xpt_suffix, sep = "")
+biopro13_data <- read_xpt(biopro13_fn)
+biopro_all <- rbind(biopro11_data, biopro13_data)
+
+retain_bioprovars <- c("SEQN", "LBXSIR", "LBDSIRSI") # BIOPRO variables to retain
+biopro_all <- biopro_all[retain_bioprovars]
+biopro_all <- setNames(biopro_all, c("ID", "sFe", "sFe_umol"))
+
+#--dietary data --
+# dietary data day 1
+diet1_11_fn <- paste(xpt_prefix, "DR1TOT_G", xpt_suffix, sep = "")
+diet1_11_data <- read_xpt(diet1_11_fn)
+diet1_13_fn <- paste(xpt_prefix, "DR1TOT_H", xpt_suffix, sep = "")
+diet1_13_data <- read_xpt(diet1_13_fn)
+
+# See which columns are in one but not the other
+setdiff(colnames(diet1_11_data), colnames(diet1_13_data))
+setdiff(colnames(diet1_13_data), colnames(diet1_11_data)) 
+# Remove the extra columns from diet1_13_data
+diet1_13_data_trimmed <- diet1_13_data[, colnames(diet1_11_data)]
+# bind the two data frames
+diet1_all <- rbind(diet1_11_data, diet1_13_data_trimmed)
+
+
+retain_diet1vars <- c("SEQN", "DR1TBCAR", "DR1TCRYP", "DR1TVB6", "DR1TFOLA", "DR1TFA", 
+                     "DR1TFF", "DR1TFDFE", "DR1TCHL", "DR1TVB12", "DR1TB12A", "DR1TVC", 
+                     "DR1TVD", "DR1TIRON", "DR1TP182", "DR1TP183", "DR1TP204", 
+                     "DR1TP205", "DR1TP225", "DR1TP226", "DR1TKCAL")
+diet1_all <- diet1_all[retain_diet1vars]
+diet1_all <- setNames(diet1_all, c("ID", "beta_carot_diet_d1", "beta_crypto_diet_d1", "B6_total_diet_d1", 
+                                 "folate_total_diet_d1", "folic_synth_diet_d1", "folate_food_diet_d1", 
+                                 "folate_dfe_diet_d1", "choline_diet_d1", "B12_diet_d1", 
+                                 "B12_addl_diet_d1", "C_diet_d1", "D_diet_d1", "Fe_diet_d1", 
+                                 "omega6_lino_diet_d1", "omega3_lino_diet_d1", "omega6_arach_diet_d1", 
+                                 "omega3_elco_diet_d1", "omega3_docosap_diet_d1", "omega3_docosah_diet_d1", "total_calories_d1"))
+
+# dietary data day 2
+diet2_11_fn <- paste(xpt_prefix, "DR2TOT_G", xpt_suffix, sep = "")
+diet2_11_data <- read_xpt(diet2_11_fn)
+diet2_13_fn <- paste(xpt_prefix, "DR2TOT_H", xpt_suffix, sep = "")
+diet2_13_data <- read_xpt(diet2_13_fn)
+
+setdiff(colnames(diet2_13_data), colnames(diet2_11_data))
+setdiff(colnames(diet2_11_data), colnames(diet2_13_data))
+# Keep only  columns that match diet2_11_data
+diet2_13_data_trimmed <- diet2_13_data[, colnames(diet2_11_data)]
+diet2_all <- rbind(diet2_11_data, diet2_13_data_trimmed)
+
+retain_diet2vars <- c("SEQN", "DR2TBCAR", "DR2TCRYP", "DR2TVB6", "DR2TFOLA", "DR2TFA", 
+                     "DR2TFF", "DR2TFDFE", "DR2TCHL", "DR2TVB12", "DR2TB12A", "DR2TVC", 
+                     "DR2TVD", "DR2TIRON", "DR2TP182", "DR2TP183", "DR2TP204", 
+                     "DR2TP205", "DR2TP225", "DR2TP226", "DR2TKCAL")
+diet2_all <- diet2_all[retain_diet2vars]
+diet2_all <- setNames(diet2_all, c("ID", "beta_carot_diet_d2", "beta_crypto_diet_d2", "B6_total_diet_d2", 
+                                 "folate_total_diet_d2", "folic_synth_diet_d2", "folate_food_diet_d2", 
+                                 "folate_dfe_diet_d2", "choline_diet_d2", "B12_diet_d2", 
+                                 "B12_addl_diet_d2", "C_diet_d2", "D_diet_d2", "Fe_diet_d2", 
+                                 "omega6_lino_diet_d2", "omega3_lino_diet_d2", "omega6_arach_diet_d2", 
+                                 "omega3_elco_diet_d2", "omega3_docosap_diet_d2", "omega3_docosah_diet_d2", "total_calories_d2"))
+
+# Merge diet day 1 and day 2 data by ID
+diet_all <- merge(diet1_all, diet2_all, by = "ID", all = TRUE)
+# Identify variables (excluding ID)
+diet_vars <- setdiff(names(diet1_all), "ID")
+# combined variables by averaging day 1 and day 2 values
+for (v in diet_vars) {
+  day1_col <- paste0(v)
+  day2_col <- sub("_d1$", "_d2", v)
+  comb_col <- sub("_d1$", "_comb", v)
+  
+  # row-wise mean 
+  diet_all[[comb_col]] <- rowMeans(diet_all[, c(day1_col, day2_col)], na.rm = TRUE)
+  
+  # If both NA, keep NA instead of 0
+  both_na <- is.na(diet_all[[day1_col]]) & is.na(diet_all[[day2_col]])
+  diet_all[[comb_col]][both_na] <- NA
+}
+# results
+head(diet_all[, grepl("_comb$", names(diet_all)) | names(diet_all) == "ID"])
+
+
+#-- depression data --
+dpq11_fn <- paste(xpt_prefix, "DPQ_G", xpt_suffix, sep = "")
+dpq11_data <- read_xpt(dpq11_fn)
+dpq13_fn <- paste(xpt_prefix, "DPQ_H", xpt_suffix, sep = "")
+dpq13_data <- read_xpt(dpq13_fn)
+dpq_all <- rbind(dpq11_data, dpq13_data)
+
+retain_depressvars <- c("SEQN", "DPQ010", "DPQ020", "DPQ030", "DPQ040", 
+                    "DPQ050", "DPQ060", "DPQ070")
+dpq_all <- dpq_all[retain_depressvars]
+dpq_all <- setNames(dpq_all, c("ID", "DPQ1", "DPQ2", "DPQ3", "DPQ4", 
+                               "DPQ5", "DPQ6", "attndiff_self"))
+
+# --- Smoking Data (SMQ) ---
+smq_g_fn <- paste(xpt_prefix, "SMQ_G", xpt_suffix, sep = "")
+smq_g_data <- read_xpt(smq_g_fn)
+smq_h_fn <- paste(xpt_prefix, "SMQ_H", xpt_suffix, sep = "")
+smq_h_data <- read_xpt(smq_h_fn)
+common_cols_smq <- intersect(colnames(smq_g_data), colnames(smq_h_data))
+smq_g_common <- smq_g_data[, common_cols_smq]
+smq_h_common <- smq_h_data[, common_cols_smq]
+smq_all <- rbind(smq_g_common, smq_h_common)
+
+retain_smqvars <- c("SEQN", "SMQ040")  
+smq_all <- smq_all[retain_smqvars]
+
+smq_all <- setNames(smq_all, c("ID", "smoking_status"))
+
+# --- Diabetes Data (DIQ) ---
+diq_g_fn <- paste(xpt_prefix, "DIQ_G", xpt_suffix, sep = "")
+diq_g_data <- read_xpt(diq_g_fn)
+diq_h_fn <- paste(xpt_prefix, "DIQ_H", xpt_suffix, sep = "")
+diq_h_data <- read_xpt(diq_h_fn)
+
+common_cols_diq <- intersect(colnames(diq_g_data), colnames(diq_h_data))
+diq_g_common <- diq_g_data[, common_cols_diq]
+diq_h_common <- diq_h_data[, common_cols_diq]
+diq_all <- rbind(diq_g_common, diq_h_common)
+
+
+retain_diqvars <- c("SEQN", "DIQ010") 
+diq_all <- diq_all[retain_diqvars]
+
+diq_all <- setNames(diq_all, c("ID", "diabetes_status"))
+
+# --- Alcohol Data (ALQ) ---
+alq_g_fn <- paste(xpt_prefix, "ALQ_G", xpt_suffix, sep = "")
+alq_g_data <- read_xpt(alq_g_fn)
+alq_h_fn <- paste(xpt_prefix, "ALQ_H", xpt_suffix, sep = "")
+alq_h_data <- read_xpt(alq_h_fn)
+
+common_cols_alq <- intersect(colnames(alq_g_data), colnames(alq_h_data))
+alq_g_common <- alq_g_data[, common_cols_alq]
+alq_h_common <- alq_h_data[, common_cols_alq]
+alq_all <- rbind(alq_g_common, alq_h_common)
+
+retain_alqvars <- c("SEQN", "ALQ120Q")  
+alq_all <- alq_all[retain_alqvars]
+
+alq_all <- setNames(alq_all, c("ID", "drinking_freq"))
+
+# --sleep disorders data--
+slq11_fn <- paste(xpt_prefix, "SLQ_G", xpt_suffix, sep = "")
+slq11_data <- read_xpt(slq11_fn)
+slq13_fn <- paste(xpt_prefix, "SLQ_H", xpt_suffix, sep = "")
+slq13_data <- read_xpt(slq13_fn)
+slq_all <- rbind(slq11_data, slq13_data)
+
+retain_sleepvars <- c("SEQN", "SLD010H")
+slq_all <- slq_all[retain_sleepvars]
+slq_all <- setNames(slq_all, c("ID", "sleep_hrs"))
+
+# --weight History data--
+whq11_fn <- paste(xpt_prefix, "WHQ_G", xpt_suffix, sep = "")
+whq11_data <- read_xpt(whq11_fn)
+whq13_fn <- paste(xpt_prefix, "WHQ_H", xpt_suffix, sep = "")
+whq13_data <- read_xpt(whq13_fn)
+
+setdiff(colnames(whq13_data), colnames(whq11_data))  # Extra in 2013
+setdiff(colnames(whq11_data), colnames(whq13_data))  # Extra in 2011
+# Find common columns
+common_cols <- intersect(colnames(whq11_data), colnames(whq13_data))
+# Subset data frames to those columns
+whq11_common <- whq11_data[, common_cols]
+whq13_common <- whq13_data[, common_cols]
+# Bind 
+whq_all <- rbind(whq11_common, whq13_common)
+
+retain_weightvars <- c("SEQN", "WHD010", "WHD020")
+whq_all <- whq_all[retain_weightvars]
+whq_all <- setNames(whq_all, c("ID", "height_self", "weight_self"))
+
+# --physical activity data--
+paq11_fn <- paste(xpt_prefix, "PAQ_G", xpt_suffix, sep = "")
+paq11_data <- read_xpt(paq11_fn)
+paq13_fn <- paste(xpt_prefix, "PAQ_H", xpt_suffix, sep = "")
+paq13_data <- read_xpt(paq13_fn)
+setdiff(colnames(paq13_data), colnames(paq11_data))  # Columns only in 2013
+setdiff(colnames(paq11_data), colnames(paq13_data))  # Columns only in 2011
+common_cols <- intersect(colnames(paq11_data), colnames(paq13_data))
+
+paq11_common <- paq11_data[, common_cols]
+paq13_common <- paq13_data[, common_cols]
+
+paq_all <- rbind(paq11_common, paq13_common)
+
+retain_pavars <- c("SEQN", "PAD645", "PAD660", "PAD675", "PAD680", "PAQ706")
+paq_all <- paq_all[retain_pavars]
+paq_all <- setNames(paq_all, c("ID", "walk_bike_min", "vigorous_min", 
+                             "moderate_min", "sedentary_min", "Active_Days_60min"))
+
+# --Blood Pressure and Cholesterol Data (BPQ_G and BPQ_H)--
+bpq11_fn <- paste(xpt_prefix, "BPQ_G", xpt_suffix, sep = "")
+bpq11_data <- read_xpt(bpq11_fn)
+bpq13_fn <- paste(xpt_prefix, "BPQ_H", xpt_suffix, sep = "")
+bpq13_data <- read_xpt(bpq13_fn)
+
+setdiff(colnames(bpq13_data), colnames(bpq11_data))  # Columns only in 2013
+setdiff(colnames(bpq11_data), colnames(bpq13_data))  # Columns only in 2011
+common_cols <- intersect(colnames(bpq11_data), colnames(bpq13_data))
+bpq11_common <- bpq11_data[, common_cols]
+bpq13_common <- bpq13_data[, common_cols]
+
+bpq_all <- rbind(bpq11_common, bpq13_common)
+
+bpq_all <- bpq_all %>%
+  select(
+    ID = SEQN,
+    hbp_diag = BPQ020,
+    chol_diag = BPQ080,
+    chol_med = BPQ100D,
+    hbp_rx = BPQ040A,
+    hbp_med = BPQ050A
+  )
+
+# --Medical Conditions Data (MCQ_G and MCQ_H)--
+mcq11_fn <- paste(xpt_prefix, "MCQ_G", xpt_suffix, sep = "")
+mcq11_data <- read_xpt(mcq11_fn)
+mcq13_fn <- paste(xpt_prefix, "MCQ_H", xpt_suffix, sep = "")
+mcq13_data <- read_xpt(mcq13_fn)
+
+setdiff(colnames(mcq13_data), colnames(mcq11_data))  # Extra in 2013
+setdiff(colnames(mcq11_data), colnames(mcq13_data))  # Extra in 2011
+common_cols <- intersect(colnames(mcq11_data), colnames(mcq13_data))
+mcq11_common <- mcq11_data[, common_cols]
+mcq13_common <- mcq13_data[, common_cols]
+
+mcq_all <- rbind(mcq11_common, mcq13_common)
+
+mcq_all <- mcq_all %>%
+  select(
+    ID = SEQN,
+    # Stroke variables
+    stroke_diag = MCQ160F,
+    stroke_diag_age = MCQ180F,
+    # Liver condition variables
+    liver_diag_ever = MCQ160L,
+    liver_diag_curr = MCQ170L,
+    liver_diag_age = MCQ180L,
+    # Cancer variables
+    cancer_diag_ever = MCQ220,
+    cancer_type1 = MCQ230A,
+    cancer_type2 = MCQ230B,
+    cancer_type3 = MCQ230C,
+    cancer_type4 = MCQ230D,
+    age_cancer1 = MCQ240A,
+    age_cancer2 = MCQ240B,
+    age_cancer3 = MCQ240C,
+    age_cancer4 = MCQ240D,
+    # Cognitive complaints
+    cogdiff_self = MCQ084,
+    memdiff7_self = MCQ380
+  )
+
+# --Blood Pressure Examination Data (BPX_G and BPX_H)--
+bpx11_fn <- paste(xpt_prefix, "BPX_G", xpt_suffix, sep = "")
+bpx11_data <- read_xpt(bpx11_fn)
+bpx13_fn <- paste(xpt_prefix, "BPX_H", xpt_suffix, sep = "")
+bpx13_data <- read_xpt(bpx13_fn)
+
+# Check column differences between years
+setdiff(colnames(bpx13_data), colnames(bpx11_data))
+setdiff(colnames(bpx11_data), colnames(bpx13_data))
+# common columns
+common_bpx_cols <- intersect(colnames(bpx11_data), colnames(bpx13_data))
+bpx11_common <- bpx11_data[, common_bpx_cols]
+bpx13_common <- bpx13_data[, common_bpx_cols]
+bpx_all <- rbind(bpx11_common, bpx13_common)
+
+# Select and rename BPX variables
+bpx_all <- bpx_all %>%
+  select(
+    ID = SEQN,
+    bp_status = PEASCST1,
+    sys_bp_1 = BPXSY1,
+    dia_bp_1 = BPXDI1,
+    sys_bp_2 = BPXSY2,
+    dia_bp_2 = BPXDI2,
+    sys_bp_3 = BPXSY3,
+    dia_bp_3 = BPXDI3,
+    sys_bp_4 = BPXSY4,
+    dia_bp_4 = BPXDI4
+  )
+
+#--duplicated supplement data processing---
+# supplement data day 1
+d1sup11_fn <- paste(xpt_prefix, "DS1IDS_G", xpt_suffix, sep = "")
+d1sup11_data <- read_xpt(d1sup11_fn)
+d1sup13_fn <- paste(xpt_prefix, "DS1IDS_H", xpt_suffix, sep = "")
+d1sup13_data <- read_xpt(d1sup13_fn)
+dsup1_all <- rbind(d1sup11_data, d1sup13_data)
+
+retain_supp1vars <- c("SEQN", "DS1ANTA", "DS1IVB6", "DS1IFA", 
+                     "DS1IFDFE", "DS1ICHL", "DS1IVB12", "DS1IVC", "DS1IVD", "DS1IIRON") # supplement variables to retain
+dsup1_all <- dsup1_all[retain_supp1vars]
+dsup1_all <- setNames(dsup1_all, c("ID", "antacid_supp_d1", 
+                                 "B6_supp_d1", "folic_supp_d1", "folate_supp_d1", 
+                                 "choline_supp_d1", "B12_supp_d1", "C_supp_d1", 
+                                 "D_supp_d1", "Fe_supp_d1"))
+                                 
+# supplement data day 2
+d2sup11_fn <- paste(xpt_prefix, "DS2IDS_G", xpt_suffix, sep = "")
+d2sup11_data <- read_xpt(d2sup11_fn)
+d2sup13_fn <- paste(xpt_prefix, "DS2IDS_H", xpt_suffix, sep = "")
+d2sup13_data <- read_xpt(d2sup13_fn)
+dsup2_all <- rbind(d2sup11_data, d2sup13_data)
+
+retain_supp2vars <- c("SEQN", "DS2ANTA", "DS2IVB6", "DS2IFA", 
+                     "DS2IFDFE", "DS2ICHL", "DS2IVB12", "DS2IVC", "DS2IVD", "DS2IIRON") # supplement variables to retain
+dsup2_all <- dsup2_all[retain_supp2vars]
+dsup2_all <- setNames(dsup2_all, c("ID", "antacid_supp_d2", 
+                                 "B6_supp_d2", "folic_supp_d2", "folate_supp_d2", 
+                                 "choline_supp_d2", "B12_supp_d2", "C_supp_d2", 
+                                 "D_supp_d2", "Fe_supp_d2"))
+
+# Merge day 1 and day 2 supplement data
+merge_duplicates_sum <- function(df) {
+  
+  # Collapse rows per ID, summing all non-NA values per column
+  merged_df <- df %>%
+    group_by(ID) %>%
+    summarise(across(
+      everything(),
+      ~ if (all(is.na(.))) NA_real_ else sum(., na.rm = TRUE),
+      .names = "{.col}"
+    )) %>%
+    ungroup()
+  
+  # Optional: check which IDs had multiple non-NA values
+  conflicts <- df %>%
+    group_by(ID) %>%
+    summarise(across(
+      everything(),
+      ~ sum(!is.na(.)),
+      .names = "{.col}_nvals"
+    )) %>%
+    ungroup() %>%
+    pivot_longer(-ID, names_to = "variable", values_to = "n_nonNA") %>%
+    filter(n_nonNA > 1)
+  
+  if(nrow(conflicts) > 0){
+    cat("IDs with multiple non-NA values for some columns:\n")
+    print(conflicts)
+  } else {
+    cat("No multiple non-NA values detected.\n")
+  }
+  
+  return(list(
+    clean_data = merged_df,
+    conflicts = conflicts
+  ))
+}
+
+result1_sum <- merge_duplicates_sum(dsup1_all)
+dsup1_all_clean <- result1_sum$clean_data
+dsup1_conflicts <- result1_sum$conflicts
+
+result2_sum <- merge_duplicates_sum(dsup2_all)
+dsup2_all_clean <- result2_sum$clean_data
+dsup2_conflicts <- result2_sum$conflicts
+
+dsup_all <- merge(dsup1_all_clean, dsup2_all_clean, by = "ID", all = TRUE)
+
+dsup_all <- dsup_all %>%
+  mutate(
+    antacid_supp_combined = rowMeans(select(., antacid_supp_d1, antacid_supp_d2), na.rm = TRUE),
+    B6_supp_combined      = rowMeans(select(., B6_supp_d1, B6_supp_d2), na.rm = TRUE),
+    folic_supp_combined   = rowMeans(select(., folic_supp_d1, folic_supp_d2), na.rm = TRUE),
+    folate_supp_combined  = rowMeans(select(., folate_supp_d1, folate_supp_d2), na.rm = TRUE),
+    choline_supp_combined = rowMeans(select(., choline_supp_d1, choline_supp_d2), na.rm = TRUE),
+    B12_supp_combined     = rowMeans(select(., B12_supp_d1, B12_supp_d2), na.rm = TRUE),
+    C_supp_combined       = rowMeans(select(., C_supp_d1, C_supp_d2), na.rm = TRUE),
+    D_supp_combined       = rowMeans(select(., D_supp_d1, D_supp_d2), na.rm = TRUE),
+    Fe_supp_combined      = rowMeans(select(., Fe_supp_d1, Fe_supp_d2), na.rm = TRUE)
+  ) %>%
+  mutate(across(ends_with("_combined"), ~ replace_na(., 0))) # explicitly set remaining NA to 0
+
+# Check
+cat("Final dataset dimensions:", dim(dsup_all), "\n")
+cat("Columns:", names(dsup_all), "\n")
+
+
+#-- Merge all datasets--
+all_data <- cog_all %>%
+  left_join(cbc_all, by = "ID") %>%
+  left_join(biopro_all, by = "ID") %>%
+  left_join(diet1_all, by = "ID") %>%
+  left_join(diet2_all, by = "ID") %>%
+  left_join(dsup_all, by = "ID") %>%
+  left_join(dpq_all, by = "ID") %>%
+  left_join(slq_all, by = "ID") %>%
+  left_join(whq_all, by = "ID") %>%
+  left_join(paq_all, by = "ID") %>%
+  left_join(bpq_all, by = "ID") %>%
+  left_join(mcq_all, by = "ID")%>%
+  left_join(bpx_all, by = "ID") %>% 
+   left_join(smq_all, by = "ID") %>%       
+  left_join(diq_all, by = "ID") %>%      
+  left_join(alq_all, by = "ID")           
+
+# Verify all datasets were merged checking column counts
+cat("Total columns in merged dataset:", ncol(all_data), "\n")
+
+#--DEMOGRAPHIC DATA EXTRACTION--
+# Demographic data
+demo11_fn <- paste(xpt_prefix, "DEMO_G", xpt_suffix, sep = "")
+demo11_data <- read_xpt(demo11_fn)
+demo13_fn <- paste(xpt_prefix, "DEMO_H", xpt_suffix, sep = "")
+demo13_data <- read_xpt(demo13_fn)
+
+# column differences between years
+setdiff(colnames(demo13_data), colnames(demo11_data))
+setdiff(colnames(demo11_data), colnames(demo13_data))
+# common columns
+common_demo_cols <- intersect(colnames(demo11_data), colnames(demo13_data))
+demo11_common <- demo11_data[, common_demo_cols]
+demo13_common <- demo13_data[, common_demo_cols]
+demo_all <- rbind(demo11_common, demo13_common)
+
+# Select and rename demographic variables according to codebook
+demo_all <- demo_all %>%
+  select(
+    ID = SEQN,
+    Gender = RIAGENDR,
+    Age = RIDAGEYR,
+    Ethnicity_NHA = RIDRETH3,
+    Edn_level = DMDEDUC2,
+    SPInterview_Language = SIALANG,
+    MECInterview_Language = MIALANG,
+    PIR = INDFMPIR
+  )
+
+# --Merge demographic data with the existing dataset--
+all_data <- all_data %>%
+  left_join(demo_all, by = "ID")
+
+# Check for demographic variables
+demo_vars_present <- c("Gender", "Age", "Ethnicity_NHA", "Edn_level", "PIR") %in% colnames(all_data)
+cat("All demographic variables present:", all(demo_vars_present), "\n")
+
+#--Final duplication check--
+# List of all datasets created
+datasets <- list(
+  cog_all, cbc_all, biopro_all, diet1_all, diet2_all,
+  dsup_all, dpq_all, slq_all, whq_all, 
+  paq_all, bpq_all, mcq_all, bpx_all, smq_all, 
+  diq_all, alq_all, demo_all
+)
+names(datasets) <- c(
+  "cog_all", "cbc_all", "biopro_all", "diet1_all", "diet2_all",
+  "dsup_all", "dpq_all", "slq_all", "whq_all",
+  "paq_all", "bpq_all", "mcq_all", "bpx_all", "smq_all",
+  "diq_all", "alq_all", "demo_all"
+)
+lapply(names(datasets), function(nm) {
+  data <- datasets[[nm]]
+  dup_count <- sum(duplicated(data$ID))
+  cat(nm, ": duplicate IDs =", dup_count, "\n")
+})
+
+
+```
+
+```{r variable processing}
+# ADDITIONAL VARIABLE PROCESSING
+
+# special codes to NA for variables
+all_data <- all_data %>%
+  mutate(
+# Convert demographic special codes to NA
+    across(c(Gender, Age, Ethnicity_NHA, Edn_level, PIR), 
+           ~ ifelse(.x %in% c(7, 9, 77, 99, 777, 999, 7777, 9999), NA, .x)),
+    
+    # Convert ALL depression variables special codes to NA
+    across(c(DPQ1, DPQ2, DPQ3, DPQ4, DPQ5, DPQ6, attndiff_self), 
+           ~ ifelse(.x %in% c(7, 9, 77, 99, 777, 999, 7777, 9999), NA, .x)),
+    
+    # Convert sleep hours special codes to NA
+    sleep_hrs = ifelse(sleep_hrs %in% c(7, 9, 77, 99, 777, 999, 7777, 9999), NA, sleep_hrs),
+    
+    # Convert ALL weight history variables special codes to NA
+    across(c(height_self, weight_self), 
+           ~ ifelse(.x %in% c(7, 9, 77, 99, 777, 999, 7777, 9999), NA, .x)),
+    
+    # Convert ALL physical activity variables special codes to NA
+    across(c(walk_bike_min, vigorous_min, moderate_min, sedentary_min, Active_Days_60min), 
+           ~ ifelse(.x %in% c(7, 9, 77, 99, 777, 999, 7777, 9999), NA, .x)),
+    
+    # Convert ALL blood pressure & cholesterol variables special codes to NA
+    across(c(hbp_diag, chol_diag, chol_med, hbp_rx, hbp_med), 
+           ~ ifelse(.x %in% c(7, 9, 77, 99, 777, 999, 7777, 9999), NA, .x)),
+    
+# Convert medical conditions variables special codes to NA (non-age variables)
+    across(c(stroke_diag, liver_diag_ever, liver_diag_curr, cancer_diag_ever, 
+             cancer_type1, cancer_type2, cancer_type3, cancer_type4,
+             cogdiff_self, memdiff7_self), 
+           ~ ifelse(.x %in% c(7, 9, 77, 99, 777, 999, 7777, 9999), NA, .x)),
+
+  # Convert AGE variables special codes to NA (only 5-digit codes)
+    across(c(stroke_diag_age, liver_diag_age, age_cancer1, age_cancer2, age_cancer3, age_cancer4), 
+           ~ ifelse(.x %in% c(77777, 99999), NA, .x)),
+    
+    # Convert blood pressure examination variables special codes to NA
+    across(c(sys_bp_1, dia_bp_1, sys_bp_2, dia_bp_2, sys_bp_3, dia_bp_3, sys_bp_4, dia_bp_4), 
+           ~ ifelse(.x %in% c(7, 9, 77, 99, 777, 999, 7777, 9999), NA, .x)),
+    
+       # Convert smoking status special codes to NA
+    smoking_status = ifelse(smoking_status %in% c(7, 9, 77, 99, 777, 999, 7777, 9999), NA, smoking_status),
+    
+    # Convert diabetes status special codes to NA
+    diabetes_status = ifelse(diabetes_status %in% c(7, 9, 77, 99, 777, 999, 7777, 9999), NA, diabetes_status),
+    
+    # Convert alcohol days per year special codes to NA
+    drinking_freq = ifelse(drinking_freq %in% c(777, 999, 7777, 9999), NA, drinking_freq))
+
+# factor variables for categorical demographics and other categorical variables
+all_data <- all_data %>%
+  mutate(
+    Gender = factor(Gender, levels = c(1, 2), labels = c("Male", "Female")),
+    
+    Ethnicity_NHA = factor(Ethnicity_NHA, 
+                          levels = c(1, 2, 3, 4, 6, 7),
+                          labels = c("Mexican American", "Other Hispanic", 
+                                    "Non-Hispanic White", "Non-Hispanic Black", 
+                                    "Non-Hispanic Asian", "Other/Multiracial")),
+    
+    Edn_level = factor(Edn_level,
+                      levels = c(1, 2, 3, 4, 5, 7, 9),
+                      labels = c("Less than 9th grade", "9-11th grade", 
+                                "High school/GED", "Some college/AA", 
+                                "College grad+", "Refused", "Don't know")),
+    
+    # Create factor for interview languages
+    SPInterview_Language = factor(SPInterview_Language,
+                                 levels = c(1, 2),
+                                 labels = c("English", "Spanish")),
+    
+    MECInterview_Language = factor(MECInterview_Language,
+                                  levels = c(1, 2),
+                                  labels = c("English", "Spanish")),
+    
+     # Create factor for cognitive functioning status
+    cog_status = factor(cog_status,
+                       levels = c(1, 2, 3, 4, 5, 6),
+                       labels = c("3 tests", "2 tests", "1 test", 
+                                 "Ineligible, proxy", "Ineligible, other language", 
+                                 "No test done")),
+    
+    # Create factor for cognitive functioning language
+    cog_lang = factor(cog_lang,
+                     levels = c(1, 2, 3),
+                     labels = c("English", "Spanish", "Asian language")),
+    
+    # Create factor for blood pressure examination status
+    bp_status = factor(bp_status,
+                      levels = c(1, 2, 3),
+                      labels = c("Complete", "Partial", "Not done")),
+    
+      # Create factor for smoking status
+    smoking_status = factor(smoking_status,
+                           levels = c(1, 2, 3),
+                           labels = c("Every day", "Some days", "Not at all")),
+    
+    # Create factor for diabetes status
+    diabetes_status = factor(diabetes_status,
+                            levels = c(1, 2, 3),
+                            labels = c("Yes", "No", "Borderline")),
+    
+        # Create binary factors for medical diagnoses (1=Yes, 2=No)
+    stroke_diag = factor(stroke_diag,
+                        levels = c(1, 2),
+                        labels = c("Yes", "No")),
+    
+    liver_diag_ever = factor(liver_diag_ever,
+                            levels = c(1, 2),
+                            labels = c("Yes", "No")),
+    
+    liver_diag_curr = factor(liver_diag_curr,
+                            levels = c(1, 2),
+                            labels = c("Yes", "No")),
+    
+    cancer_diag_ever = factor(cancer_diag_ever,
+                             levels = c(1, 2),
+                             labels = c("Yes", "No")),
+    
+    hbp_diag = factor(hbp_diag,
+                     levels = c(1, 2),
+                     labels = c("Yes", "No")),
+    
+    chol_diag = factor(chol_diag,
+                      levels = c(1, 2),
+                      labels = c("Yes", "No")),
+    
+    chol_med = factor(chol_med,
+                     levels = c(1, 2),
+                     labels = c("Yes", "No")),
+    
+    hbp_rx = factor(hbp_rx,
+                   levels = c(1, 2),
+                   labels = c("Yes", "No")),
+    
+    hbp_med = factor(hbp_med,
+                    levels = c(1, 2),
+                    labels = c("Yes", "No")),
+    
+    # Create factor for cognitive difficulty self-report
+    cogdiff_self = factor(cogdiff_self,
+                         levels = c(1, 2),
+                         labels = c("Yes", "No")),
+    
+    # Create factor for memory difficulty frequency
+    memdiff7_self = factor(memdiff7_self,
+                          levels = c(0, 1, 2, 3, 4),
+                          labels = c("Never", "About once", "Two or three times", 
+                                    "Nearly every day", "Several times a day")),
+    
+    # Create factors for cancer types
+    cancer_type1 = factor(cancer_type1,
+                         levels = c(10:39, 66),
+                         labels = c("Bladder", "Blood", "Bone", "Brain", "Breast",
+                                   "Cervix", "Colon", "Esophagus", "Gallbladder", "Kidney",
+                                   "Larynx/windpipe", "Leukemia", "Liver", "Lung", 
+                                   "Lymphoma/Hodgkin's", "Melanoma", "Mouth/tongue/lip",
+                                   "Nervous system", "Ovary", "Pancreas", "Prostate",
+                                   "Rectum", "Skin (non-melanoma)", "Skin (don't know)",
+                                   "Soft tissue", "Stomach", "Testis", "Thyroid",
+                                   "Uterus", "Other", "More than 3 kinds")),
+    
+    cancer_type2 = factor(cancer_type2,
+                         levels = c(10:39, 66),
+                         labels = c("Bladder", "Blood", "Bone", "Brain", "Breast",
+                                   "Cervix", "Colon", "Esophagus", "Gallbladder", "Kidney",
+                                   "Larynx/windpipe", "Leukemia", "Liver", "Lung", 
+                                   "Lymphoma/Hodgkin's", "Melanoma", "Mouth/tongue/lip",
+                                   "Nervous system", "Ovary", "Pancreas", "Prostate",
+                                   "Rectum", "Skin (non-melanoma)", "Skin (don't know)",
+                                   "Soft tissue", "Stomach", "Testis", "Thyroid",
+                                   "Uterus", "Other", "More than 3 kinds")),
+    
+    cancer_type3 = factor(cancer_type3,
+                         levels = c(10:39, 66),
+                         labels = c("Bladder", "Blood", "Bone", "Brain", "Breast",
+                                   "Cervix", "Colon", "Esophagus", "Gallbladder", "Kidney",
+                                   "Larynx/windpipe", "Leukemia", "Liver", "Lung", 
+                                   "Lymphoma/Hodgkin's", "Melanoma", "Mouth/tongue/lip",
+                                   "Nervous system", "Ovary", "Pancreas", "Prostate",
+                                   "Rectum", "Skin (non-melanoma)", "Skin (don't know)",
+                                   "Soft tissue", "Stomach", "Testis", "Thyroid",
+                                   "Uterus", "Other", "More than 3 kinds")),
+    
+    cancer_type4 = factor(cancer_type4,
+                         levels = c(10:39, 66),
+                         labels = c("Bladder", "Blood", "Bone", "Brain", "Breast",
+                                   "Cervix", "Colon", "Esophagus", "Gallbladder", "Kidney",
+                                   "Larynx/windpipe", "Leukemia", "Liver", "Lung", 
+                                   "Lymphoma/Hodgkin's", "Melanoma", "Mouth/tongue/lip",
+                                   "Nervous system", "Ovary", "Pancreas", "Prostate",
+                                   "Rectum", "Skin (non-melanoma)", "Skin (don't know)",
+                                   "Soft tissue", "Stomach", "Testis", "Thyroid",
+                                   "Uterus", "Other", "More than 3 kinds"))
+  )
+
+
+# FINAL DATA CHECK
+# structure of final dataset
+cat("\nFinal dataset structure:\n")
+str(all_data[, 1:20]) 
+
+# Save  final dataset
+saveRDS(all_data, "nhanes_merged_data_2011_2014.rds")
+write.csv(all_data, "nhanes_merged_data_2011_2014.csv", row.names = FALSE)
+
+
+```
+
+
+```{r missing values}
+
+#all_data <- read.csv("nhanes_merged_data_2011_2014.csv")
+
+# BMI variable from weight and height 
+if (!"BMI" %in% colnames(all_data)) {
+  # self-reported
+  all_data <- all_data %>%
+    mutate(
+      height_cm = ifelse(!is.na(weight_self) & !is.na(height_self), 
+                         height_self * 2.54, NA_real_), # convert inches to cm
+      weight_kg = ifelse(!is.na(weight_self), 
+                         weight_self * 0.453592, NA_real_), # convert lbs to kg
+      BMI = weight_kg / ((height_cm/100)^2)
+    )
+}
+
+# --na summary Filter for age 60 and above --
+data_60plus <- all_data %>%
+  filter(Age >= 60)
+
+#--Collapse or combine?
+data_60plus <- data_60plus %>%
+  mutate(
+    activity_avg = rowMeans(select(., walk_bike_min, vigorous_min, moderate_min), na.rm = TRUE)
+  )
+
+
+na_summary_60plus <- data_60plus %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(cols = everything(),
+               names_to = "variable",
+               values_to = "n_na") %>%
+  mutate(
+    total_ids = nrow(data_60plus),
+    percent_na = round((n_na / total_ids) * 100, 2),
+    missing_category = case_when(
+      percent_na == 0 ~ "0%",
+      percent_na > 0 & percent_na < 5 ~ "0.1–5%",
+      percent_na >= 5 & percent_na < 20 ~ "5–20%",
+      percent_na >= 20 & percent_na < 50 ~ "20–50%",
+      percent_na >= 50 & percent_na < 80 ~ "50–80%",
+      percent_na >= 80 ~ "80–100%"
+    )
+  )
+
+kable(na_summary_60plus, caption = "NA Counts and Percentages by Variable (Age ≥ 60)") %>%
+  kable_styling(full_width = FALSE, position = "center")
+
+na_lists_60plus <- split(na_summary_60plus$variable, na_summary_60plus$missing_category)
+zero_60plus <- na_lists_60plus[["0%"]]
+less_5_60plus <- na_lists_60plus[["0.1–5%"]]
+five_20_60plus <- na_lists_60plus[["5–20%"]]
+twenty_50_60plus <- na_lists_60plus[["20–50%"]]
+fifty_80_60plus <- na_lists_60plus[["50–80%"]]
+eighty_100_60plus <- na_lists_60plus[["80–100%"]]
+
+zero_60plus
+less_5_60plus
+five_20_60plus
+twenty_50_60plus
+fifty_80_60plus
+eighty_100_60plus
+
+#install.packages("mice")
+library(mice)
+
+#--Imputation--
+# all variables with <20% missing data (from less_5_60plus and five_20_60plus)
+vars_to_impute_clean <- c(
+  # Lab / physiological measurements
+  "RBC", "Hb", "Hct", "MCH", "MCHC", "RBC_DW", 
+  "sFe", "sFe_umol", 
+  "height_self", "weight_self", "height_cm", "weight_kg", "BMI",
+  
+  # Cognitive / memory scores
+  "cog_lang", "imm_rcl1", "imm_rcl2", "imm_rcl3", 
+  "del_rcl", "intrusn1", "intrusn2", "intrusn3", "intrusn_del",
+  "anim_flu", "dig_sym", "cogdiff_self", "memdiff7_self",
+  
+  # Dietary intake variables (numeric, continuous)
+  "beta_carot_diet_d1", "beta_crypto_diet_d1", "B6_total_diet_d1", 
+  "folate_total_diet_d1", "folic_synth_diet_d1", "folate_food_diet_d1", 
+  "folate_dfe_diet_d1", "choline_diet_d1", "B12_diet_d1", "B12_addl_diet_d1", 
+  "C_diet_d1", "D_diet_d1", "Fe_diet_d1", "omega6_lino_diet_d1", 
+  "omega3_lino_diet_d1", "omega6_arach_diet_d1", "omega3_elco_diet_d1", 
+  "omega3_docosap_diet_d1", "omega3_docosah_diet_d1", "total_calories_d1",
+  "beta_carot_diet_d2", "beta_crypto_diet_d2", "B6_total_diet_d2", 
+  "folate_total_diet_d2", "folic_synth_diet_d2", "folate_food_diet_d2", 
+  "folate_dfe_diet_d2", "choline_diet_d2", "B12_diet_d2", "B12_addl_diet_d2", 
+  "C_diet_d2", "D_diet_d2", "Fe_diet_d2", "omega6_lino_diet_d2", 
+  "omega3_lino_diet_d2", "omega6_arach_diet_d2", "omega3_elco_diet_d2", 
+  "omega3_docosap_diet_d2", "omega3_docosah_diet_d2", "total_calories_d2",
+  
+  # Depression questionnaire / self-report numeric
+  "DPQ1", "DPQ2", "DPQ3", "DPQ4", "DPQ5", "DPQ6",
+  
+  # Self-reported activity / numeric
+  "attndiff_self", "sedentary_min",
+  
+  # Blood pressure numeric (continuous)
+  "sys_bp_1", "dia_bp_1", "sys_bp_2", "dia_bp_2", "sys_bp_3", "dia_bp_3",
+  
+  # Poverty/income ratio numeric
+  "PIR"
+)
+
+
+vars_to_exclude <- c(
+  # Demographics / fixed
+  "Ethnicity_NHA", "MECInterview_Language", "Edn_level",
+  
+  # Binary / diagnoses (logreg requires factor, often low missingness)
+  "hbp_diag", "chol_diag", "stroke_diag", "liver_diag_ever", "cancer_diag_ever", 
+  "diabetes_status",
+  
+  # Already derived / composite or categorical (BMI_category, etc.)
+  "BMI_category"
+)
+
+
+#Remove duplicates, exclude variables shouldn't be imputed
+vars_to_impute_clean <- unique(vars_to_impute_clean)
+
+# relevant predictors for imputation (demographics, health status, etc.)
+predictors_for_imputation <- c("BMI", "Age", "Gender", "Ethnicity_NHA", "Edn_level", 
+                               "diabetes_status", "hbp_diag", "chol_diag", "stroke_diag",
+                               "cancer_diag_ever", "MECInterview_Language", "PIR")
+
+# dataset for imputation
+impute_data <- data_60plus %>%
+  select(all_of(vars_to_impute_clean), all_of(predictors_for_imputation))
+
+# variable types and methods
+var_types <- sapply(impute_data, class)
+
+# imputation methods based on variable type
+impute_methods <- rep("pmm", ncol(impute_data))  #predictive mean matching
+
+# categorical variables, appropriate method
+categorical_vars <- names(impute_data)[sapply(impute_data, function(x) is.factor(x) | is.character(x))]
+impute_methods[names(impute_data) %in% categorical_vars] <- "polyreg" 
+
+# binary variables, use logreg
+binary_vars <- names(impute_data)[sapply(impute_data, function(x) length(unique(na.omit(x))) == 2)]
+impute_methods[names(impute_data) %in% binary_vars] <- "logreg"
+
+# MICE
+set.seed(123)
+imputed <- mice(impute_data, 
+                m = 20, 
+                method = impute_methods,
+                maxit = 25, 
+                seed = 123,
+                print = FALSE)
+
+# convergence
+plot(imputed)
+
+# completed dataset ( first imputation)
+data_imputed <- complete(imputed, 1)
+
+# Replace imputed variables in original dataset
+data_60plus_imputed <- data_60plus
+data_60plus_imputed[, vars_to_impute_clean] <- data_imputed[, vars_to_impute_clean]
+
+# Verify imputation 
+cat("Missing data after imputation:\n")
+print(colSums(is.na(data_60plus_imputed[, vars_to_impute_clean])))
+
+# Save the imputed dataset as CSV
+write.csv(data_60plus_imputed, file = "data_60plus_imputed.csv", row.names = FALSE)
+saveRDS(data_60plus_imputed, file = "data_60plus_imputed.rds")
+```
+
+```{r normaliztion and transformation}
+
+#data_60plus_imputed <- readRDS("data_60plus_imputed.rds")
+
+#--key variables--
+key_variables <- list(
+  # Immediate Recall Components
+  "imm_rcl1" = "Immediate Recall Trial 1",
+  "imm_rcl2" = "Immediate Recall Trial 2",
+  "imm_rcl3" = "Immediate Recall Trial 3",
+  "intrusn1" = "Intrusions Trial 1",
+  "intrusn2" = "Intrusions Trial 2",
+  "intrusn3" = "Intrusions Trial 3",
+  
+  # Other Cognitive Components
+  "anim_flu" = "Animal Fluency",
+  "dig_sym" = "Digit Symbol Substitution",
+  
+  # Systemic Iron Components
+  "sFe" = "Serum Iron (ug/dL)",
+  "RBC" = "Red Blood Cell Count",
+  "Hb" = "Hemoglobin (g/dL)",
+  "Hct" = "Hematocrit (%)",
+  "MCH" = "Mean Corpuscular Hemoglobin",
+  "MCHC" = "Mean Corpuscular Hemoglobin Concentration",
+  "RBC_DW" = "Red Cell Distribution Width",
+  
+  # Dietary Iron Components
+  "Fe_diet_d1" = "Dietary Iron Day 1 (mg)",
+  "Fe_diet_d2" = "Dietary Iron Day 2 (mg)",
+  "C_diet_d1" = "Dietary Vitamin C Day 1 (mg)",
+  "C_diet_d2" = "Dietary Vitamin C Day 2 (mg)",
+  
+  # Supplement Iron Components
+  "Fe_supp_d1" = "Iron Supplement Day 1 (mg)",
+  "Fe_supp_d2" = "Iron Supplement Day 2 (mg)",
+  "C_supp_d1" = "Vitamin C Supplement Day 1 (mg)",
+  "C_supp_d2" = "Vitamin C Supplement Day 2 (mg)",
+  
+  # Choline Components
+  "choline_diet_d1" = "Dietary Choline Day 1 (mg)",
+  "choline_diet_d2" = "Dietary Choline Day 2 (mg)",
+  "choline_supp_d1" = "Choline Supplement Day 1 (mg)",
+  "choline_supp_d2" = "Choline Supplement Day 2 (mg)",
+  
+  # Folate Components
+  "folate_dfe_diet_d1" = "Dietary Folate DFE Day 1 (mcg)",
+  "folate_dfe_diet_d2" = "Dietary Folate DFE Day 2 (mcg)",
+  "folate_supp_d1" = "Folate Supplement Day 1 (mcg)",
+  "folate_supp_d2" = "Folate Supplement Day 2 (mcg)",
+  
+  # Folic Acid Components
+  "folic_synth_diet_d1" = "Dietary Folic Acid Day 1 (mcg)",
+  "folic_synth_diet_d2" = "Dietary Folic Acid Day 2 (mcg)",
+  "folic_supp_d1" = "Folic Acid Supplement Day 1 (mcg)",
+  "folic_supp_d2" = "Folic Acid Supplement Day 2 (mcg)",
+  
+  # Vitamin B6 Components
+  "B6_total_diet_d1" = "Dietary Vitamin B6 Day 1 (mg)",
+  "B6_total_diet_d2" = "Dietary Vitamin B6 Day 2 (mg)",
+  "B6_supp_d1" = "Vitamin B6 Supplement Day 1 (mg)",
+  "B6_supp_d2" = "Vitamin B6 Supplement Day 2 (mg)",
+  
+  # Vitamin B12 Components
+  "B12_diet_d1" = "Dietary Vitamin B12 Day 1 (mcg)",
+  "B12_diet_d2" = "Dietary Vitamin B12 Day 2 (mcg)",
+  "B12_addl_diet_d1" = "Additional Dietary B12 Day 1 (mcg)",
+  "B12_addl_diet_d2" = "Additional Dietary B12 Day 2 (mcg)",
+  "B12_supp_d1" = "Vitamin B12 Supplement Day 1 (mcg)",
+  "B12_supp_d2" = "Vitamin B12 Supplement Day 2 (mcg)",
+  
+  # Depression Components
+  "DPQ1" = "Depression Question 1",
+  "DPQ2" = "Depression Question 2",
+  "DPQ3" = "Depression Question 3",
+  "DPQ4" = "Depression Question 4",
+  "DPQ5" = "Depression Question 5",
+  "DPQ6" = "Depression Question 6",
+  
+  # Blood Pressure Components
+  "sys_bp_1" = "Systolic Blood Pressure Reading 1 (mmHg)",
+  "sys_bp_2" = "Systolic Blood Pressure Reading 2 (mmHg)",
+  "sys_bp_3" = "Systolic Blood Pressure Reading 3 (mmHg)",
+  "sys_bp_4" = "Systolic Blood Pressure Reading 4 (mmHg)",
+  "dia_bp_1" = "Diastolic Blood Pressure Reading 1 (mmHg)",
+  "dia_bp_2" = "Diastolic Blood Pressure Reading 2 (mmHg)",
+  "dia_bp_3" = "Diastolic Blood Pressure Reading 3 (mmHg)",
+  "dia_bp_4" = "Diastolic Blood Pressure Reading 4 (mmHg)"
+)
+
+# --NORMALITY TESTS--
+#ks tests
+#normality_tests <- function(data, variables) {
+  #results <- data.frame()
+  #for (var in variables) {
+    #x <- data[[var]]
+    #x <- x[!is.na(x)]
+    
+    #if (length(x) > 3) {
+      # Kolmogorov-Smirnov test for normality
+      #ks_test <- ks.test(x, "pnorm", mean = mean(x), sd = sd(x))
+      
+      #results <- rbind(results, data.frame(
+        #Variable = var,
+        #N = length(x),
+        #KS_statistic = ks_test$statistic,
+        #KS_p_value = ks_test$p.value,
+        #Skewness = skewness(x, na.rm = TRUE),
+        #Kurtosis = kurtosis(x, na.rm = TRUE)
+      #))
+    #}
+  #}
+  #return(results)
+#}
+
+#lillifores test
+normality_tests <- function(data, variables) {
+  # Load required library
+  if (!require(nortest)) {
+    install.packages("nortest")
+    library(nortest)
+  }
+  
+  results <- data.frame()
+  for (var in variables) {
+    x <- data[[var]]
+    x <- x[!is.na(x)]
+    
+    if (length(x) > 3) {
+      # Lilliefors (Kolmogorov-Smirnov) test for normality
+      lillie_test <- lillie.test(x)
+      
+      results <- rbind(results, data.frame(
+        Variable = var,
+        N = length(x),
+        Lillie_statistic = lillie_test$statistic,
+        Lillie_p_value = lillie_test$p.value,
+        Skewness = skewness(x, na.rm = TRUE),
+        Kurtosis = kurtosis(x, na.rm = TRUE)
+      ))
+    }
+  }
+  return(results)
+}
+
+
+# Test normality for key variables
+normality_results <- normality_tests(data_60plus_imputed, names(key_variables))
+print(normality_results)
+write.csv(normality_results, file = "normality_results.csv", row.names = FALSE)
+
+#--Visualizing Normality--
+create_detailed_plots <- function(data, variables) {
+  for (var in variables) {
+    x <- data[[var]]
+    x <- x[!is.na(x)]
+    
+    if (length(x) > 3) {
+      # a 2-panel plot
+      png(paste0("normality_detailed_", var, ".png"), 
+          width = 1000, height = 500)
+      
+      par(mfrow = c(1, 2), mar = c(4, 4, 4, 2))
+      
+      # histogram
+      hist(x, main = paste("Histogram of", var),
+           xlab = var, col = "lightblue", probability = TRUE,
+           breaks = "FD", cex.main = 1.2, cex.lab = 1.1)
+      
+      # Add normal curve
+      x_range <- seq(min(x), max(x), length = 100)
+      curve(dnorm(x, mean = mean(x), sd = sd(x)), 
+            add = TRUE, col = "red", lwd = 2, lty = 2)
+      
+      # Add density curve
+      lines(density(x), col = "blue", lwd = 2)
+      
+      legend("topright", legend = c("Normal curve", "Data density"),
+             col = c("red", "blue"), lty = c(2, 1), lwd = 2)
+      
+      # Q-Q plot
+      qqnorm(x, main = paste("Q-Q Plot of", var),
+             pch = 19, col = alpha("black", 0.6), cex = 0.8,
+             cex.main = 1.2, cex.lab = 1.1)
+      qqline(x, col = "red", lwd = 2)
+      
+      # Add confidence envelope 
+      n <- length(x)
+      Q <- qnorm(ppoints(n))
+      SE <- (1/dnorm(Q)) * sqrt((Q^2 + 1)/(4 * n))
+      upper <- Q + 1.96 * SE
+      lower <- Q - 1.96 * SE
+      lines(sort(Q), sort(upper), col = "blue", lty = 2)
+      lines(sort(Q), sort(lower), col = "blue", lty = 2)
+      
+      dev.off()
+    }
+  }
+}
+
+# detailed individual plots
+x <- create_detailed_plots(data_60plus_imputed, names(key_variables))
+x
+
+#--Transformation--
+# Install and load 
+if (!require("MASS")) install.packages("MASS")
+library(MASS)
+
+# Function to perform Box-Cox transformation
+boxcox_transform <- function(data, variables, alpha = 0.05) {
+  # Identify variables that are non-normal
+  non_normal_vars <- normality_results$Variable[normality_results$KS_p_value < alpha]
+  
+if (length(non_normal_vars) == 0) {
+    cat("No non-normal variables found at alpha =", alpha, "\n")
+    return(list(transformed_data = data, transformation_info = NULL))
+  }
+  
+  cat("Non-normal variables (p <", alpha, "):", paste(non_normal_vars, collapse = ", "), "\n\n")
+  
+  # Apply Box-Cox transformation to non-normal variables
+  transformed_data <- data
+  transformation_info <- list()
+  
+  for (var in non_normal_vars) {
+    x <- data[[var]]
+    x <- x[!is.na(x)]
+    
+    # Ensure all values are positive (Box-Cox requires positive values)
+    if (any(x <= 0)) {
+      # Add constant to make values positive
+      shift <- abs(min(x, na.rm = TRUE)) + 0.01
+      x_shifted <- x + shift
+      cat("Variable", var, "had non-positive values. Added constant of", shift, "before transformation.\n")
+    } else {
+      x_shifted <- x
+      shift <- 0
+    }
+    
+    #  optimal lambda using Box-Cox
+    bc <- boxcox(x_shifted ~ 1, plotit = FALSE)
+    lambda <- bc$x[which.max(bc$y)]
+    
+    # Apply transformation
+    if (abs(lambda) < 0.001) { 
+      transformed <- log(x_shifted)
+      method <- "log"
+    } else {
+      transformed <- (x_shifted^lambda - 1) / lambda
+      method <- paste0("power (λ = ", round(lambda, 3), ")")
+    }
+    
+    # Create new variable name
+    new_var_name <- paste0(var, "_bc")
+    transformed_data[[new_var_name]] <- NA
+    transformed_data[[new_var_name]][!is.na(data[[var]])] <- transformed
+    
+    # Store transformation information
+    transformation_info[[var]] <- list(
+      lambda = lambda,
+      shift = shift,
+      method = method,
+      original_var = var,
+      transformed_var = new_var_name
+    )
+    
+    cat("Transformed", var, "using", method, "transformation\n")
+  }
+  
+  return(list(
+    transformed_data = transformed_data,
+    transformation_info = transformation_info
+  ))
+}
+
+#--Test Normality Again--
+# Function to test normality after transformation
+test_transformation_effectiveness <- function(transformed_data, transformation_info) {
+  results <- data.frame()
+  
+  for (var in names(transformation_info)) {
+    info <- transformation_info[[var]]
+    transformed_var <- info$transformed_var
+    
+    # Test normality of transformed variable
+    x_trans <- transformed_data[[transformed_var]]
+    x_trans <- x_trans[!is.na(x_trans)]
+    
+    if (length(x_trans) > 3) {
+      ks_test_trans <- ks.test(x_trans, "pnorm", mean = mean(x_trans), sd = sd(x_trans))
+      
+      results <- rbind(results, data.frame(
+        Variable = var,
+        Transformation = info$method,
+        Lambda = info$lambda,
+        Original_KS_p = info$original_KS_p,
+        Transformed_KS_p = ks_test_trans$p.value,
+        Improvement = ks_test_trans$p.value - info$original_KS_p,
+        Now_Normal = ks_test_trans$p.value >= 0.05
+      ))
+    }
+  }
+  
+  return(results)
+}
+
+# Apply Box-Cox transformation to non-normal variables
+transformation_results <- boxcox_transform_non_normal(data_60plus_imputed, normality_results, alpha = 0.05)
+
+# Get transformed dataset
+transformed_data_60plus <- transformation_results$transformed_data
+
+# transformation effectiveness
+if (!is.null(transformation_results$transformation_info)) {
+  effectiveness <- test_transformation_effectiveness(transformed_data_60plus, 
+                                                   transformation_results$transformation_info)
+  
+  print(effectiveness)
+
+
+# --VISUALIZE TRANSFORMATION RESULTS--
+create_transformation_comparison_plots <- function(original_data, transformed_data, var) {
+  library(ggplot2)
+  library(gridExtra)
+  
+  transformed_var <- paste0(var, "_bc")
+  
+  if (transformed_var %in% colnames(transformed_data)) {
+    p1 <- ggplot(original_data, aes_string(x = var)) +
+      geom_histogram(aes(y = ..density..), bins = 30, fill = "lightblue", color = "black", alpha = 0.7) +
+      geom_density(color = "red", linewidth = 1) +
+      labs(title = paste("Original:", var), 
+           subtitle = paste("KS p =", round(normality_results$KS_p_value[normality_results$Variable == var], 4)),
+           x = var, y = "Density") +
+      theme_minimal()
+    
+    p2 <- ggplot(transformed_data, aes_string(x = transformed_var)) +
+      geom_histogram(aes(y = ..density..), bins = 30, fill = "lightgreen", color = "black", alpha = 0.7) +
+      geom_density(color = "blue", linewidth = 1) +
+      labs(title = paste("Transformed:", transformed_var), 
+           x = transformed_var, y = "Density") +
+      theme_minimal()
+    
+    grid.arrange(p1, p2, ncol = 2)
+  }
+}
+
+# comparison plots for each transformed variable
+if (!is.null(transformation_results$transformation_info)) {
+  for (var in names(transformation_results$transformation_info)) {
+    create_transformation_comparison_plots(age_60plus, transformed_data_60plus, var)
+  }
+}
+
+# Save transformed dataset
+saveRDS(transformed_data_60plus, "nhanes_60plus_transformed_2011_2014.rds")
+write.csv(transformed_data_60plus, "nhanes_60plus_transformed_2011_2014.csv", row.names = FALSE)
+
+
+```
+
+
+```{r composite variables, include = FALSE, echo = FALSE}
+# === COMPOSITE VARIABLE CREATION -----
+
+# adjusted recall scores for each trial
+all_data <- all_data %>%
+  mutate(
+    adj_rc1 = (imm_rcl1 - intrusn1) / (imm_rcl1 + intrusn1),
+    adj_rc2 = (imm_rcl2 - intrusn2) / (imm_rcl2 + intrusn2),
+    adj_rc3 = (imm_rcl3 - intrusn3) / (imm_rcl3 + intrusn3)
+  )
+
+# Z-score function
+z_score <- function(x) {
+  (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
+}
+
+# memory and cognitive composites
+all_data <- all_data %>%
+  mutate(
+    # Memory Composite 1: mean of z-scores of mean adjusted recall and animal fluency
+    memory_comp1 = rowMeans(cbind(
+      z_score(rowMeans(cbind(adj_rc1, adj_rc2, adj_rc3), na.rm = TRUE)),
+      z_score(anim_flu)
+    ), na.rm = TRUE),
+    
+    # Memory Composite 2: mean of z-scores of max adjusted recall and animal fluency
+    memory_comp2 = rowMeans(cbind(
+      z_score(pmax(adj_rc1, adj_rc2, adj_rc3, na.rm = TRUE)),
+      z_score(anim_flu)
+    ), na.rm = TRUE),
+    
+    # Cognitive Composite 1: combines Memory Composite 1 with digit symbol
+    cognitive_comp1 = rowMeans(cbind(
+      z_score(memory_comp1),
+      z_score(dig_sym)
+    ), na.rm = TRUE),
+    
+    # Cognitive Composite 2: combines Memory Composite 2 with digit symbol
+    cognitive_comp2 = rowMeans(cbind(
+      z_score(memory_comp2),
+      z_score(dig_sym)
+    ), na.rm = TRUE)
+  )
+
+
+# iron-related composites
+all_data <- all_data %>%
+  mutate(
+    # Systemic Iron Composite 1
+    systemic_iron_comp1 = rowMeans(cbind(
+      z_score(sFe / sFe_umol),  # serum iron
+      z_score(RBC),             # RBC count
+      z_score(Hb),              # hemoglobin
+      z_score(Hct),             # hematocrit
+      z_score(MCH),             # MCH
+      z_score(RBC_DW)           # RDW
+    ), na.rm = TRUE),
+    
+    # Systemic Iron Composite 2 (uses MCHC instead of MCH)
+    systemic_iron_comp2 = rowMeans(cbind(
+      z_score(sFe / sFe_umol),  # serum iron
+      z_score(RBC),             # RBC count
+      z_score(Hb),              # hemoglobin
+      z_score(Hct),             # hematocrit
+      z_score(MCHC),            # MCHC
+      z_score(RBC_DW)           # RDW
+    ), na.rm = TRUE),
+    
+    # Dietary Iron Index (average across days)
+    dietary_iron_avg = rowMeans(cbind(Fe_diet_d1, Fe_diet_d2), na.rm = TRUE),
+    dietary_vitC_avg = rowMeans(cbind(C_diet_d1, C_diet_d2), na.rm = TRUE),
+    dietary_iron_index = z_score(dietary_iron_avg) + z_score(dietary_vitC_avg),
+    
+    # Supplement Iron Index (average across days)
+    supp_iron_avg = rowMeans(cbind(Fe_supp_d1, Fe_supp_d2), na.rm = TRUE),
+    supp_vitC_avg = rowMeans(cbind(C_supp_d1, C_supp_d2), na.rm = TRUE),
+    supp_iron_index = z_score(supp_iron_avg) + z_score(supp_vitC_avg),
+    
+    # Composite Fe Intake
+    composite_fe_intake = rowMeans(cbind(
+      dietary_iron_index,
+      supp_iron_index
+    ), na.rm = TRUE),
+    
+    # Overall Iron Status composites
+    overall_iron_status1 = rowMeans(cbind(
+      systemic_iron_comp1,
+      composite_fe_intake
+    ), na.rm = TRUE),
+    
+    overall_iron_status2 = rowMeans(cbind(
+      systemic_iron_comp2,
+      composite_fe_intake
+    ), na.rm = TRUE)
+  )
+
+
+# nutrient intake composites (averaged across days)
+all_data <- all_data %>%
+  mutate(
+    total_choline = rowMeans(cbind(
+      choline_diet_d1 + ifelse(is.na(choline_supp_d1), 0, choline_supp_d1),
+      choline_diet_d2 + ifelse(is.na(choline_supp_d2), 0, choline_supp_d2)
+    ), na.rm = TRUE),
+    
+    total_folate = rowMeans(cbind(
+      folate_dfe_diet_d1 + ifelse(is.na(folate_supp_d1), 0, folate_supp_d1),
+      folate_dfe_diet_d2 + ifelse(is.na(folate_supp_d2), 0, folate_supp_d2)
+    ), na.rm = TRUE),
+    
+    total_folic_acid = rowMeans(cbind(
+      folic_synth_diet_d1 + ifelse(is.na(folic_supp_d1), 0, folic_supp_d1),
+      folic_synth_diet_d2 + ifelse(is.na(folic_supp_d2), 0, folic_supp_d2)
+    ), na.rm = TRUE),
+    
+    total_B6 = rowMeans(cbind(
+      B6_total_diet_d1 + ifelse(is.na(B6_supp_d1), 0, B6_supp_d1),
+      B6_total_diet_d2 + ifelse(is.na(B6_supp_d2), 0, B6_supp_d2)
+    ), na.rm = TRUE),
+    
+    total_B12 = rowMeans(cbind(
+      B12_diet_d1 + B12_addl_diet_d1 + ifelse(is.na(B12_supp_d1), 0, B12_supp_d1),
+      B12_diet_d2 + B12_addl_diet_d2 + ifelse(is.na(B12_supp_d2), 0, B12_supp_d2)
+    ), na.rm = TRUE)
+  )
+
+# depression composite
+all_data <- all_data %>%
+  mutate(
+    composite_depression = DPQ1 + DPQ2 + DPQ3 + DPQ4 + DPQ5 + DPQ6
+  )
+
+# cognitive impairment indicators
+# reference means and SDs for participants <70 with no complaints
+ref_data <- all_data %>%
+  filter(Age < 70 & is.na(cogdiff_self) & is.na(memdiff7_self))
+
+memory_comp1_mean <- mean(ref_data$memory_comp1, na.rm = TRUE)
+memory_comp1_sd <- sd(ref_data$memory_comp1, na.rm = TRUE)
+memory_comp2_mean <- mean(ref_data$memory_comp2, na.rm = TRUE)
+memory_comp2_sd <- sd(ref_data$memory_comp2, na.rm = TRUE)
+
+cognitive_comp1_mean <- mean(ref_data$cognitive_comp1, na.rm = TRUE)
+cognitive_comp1_sd <- sd(ref_data$cognitive_comp1, na.rm = TRUE)
+cognitive_comp2_mean <- mean(ref_data$cognitive_comp2, na.rm = TRUE)
+cognitive_comp2_sd <- sd(ref_data$cognitive_comp2, na.rm = TRUE)
+
+# impairment indicators
+all_data <- all_data %>%
+  mutate(
+    mild_memory_impair = (memory_comp1 < (memory_comp1_mean - 0.5 * memory_comp1_sd)) |
+                         (memory_comp2 < (memory_comp2_mean - 0.5 * memory_comp2_sd)),
+    moderate_memory_impair = (memory_comp1 < (memory_comp1_mean - memory_comp1_sd)) |
+                            (memory_comp2 < (memory_comp2_mean - memory_comp2_sd)),
+    mild_cognitive_impair = (cognitive_comp1 < (cognitive_comp1_mean - 0.5 * cognitive_comp1_sd)) |
+                           (cognitive_comp2 < (cognitive_comp2_mean - 0.5 * cognitive_comp2_sd)),
+    moderate_cognitive_impair = (cognitive_comp1 < (cognitive_comp1_mean - cognitive_comp1_sd)) |
+                               (cognitive_comp2 < (cognitive_comp2_mean - cognitive_comp2_sd))
+  )
+
+# BLOOD PRESSURE SUMMARY 
+# average blood pressure readings across available measurements
+all_data <- all_data %>%
+  mutate(
+    # Average systolic blood pressure across available readings
+    sys_bp_avg = rowMeans(cbind(sys_bp_1, sys_bp_2, sys_bp_3, sys_bp_4), na.rm = TRUE),
+    
+    # Average diastolic blood pressure across available readings
+    dia_bp_avg = rowMeans(cbind(dia_bp_1, dia_bp_2, dia_bp_3, dia_bp_4), na.rm = TRUE),
+    
+    #  mean arterial pressure (MAP)
+    mean_arterial_pressure = (2 * dia_bp_avg + sys_bp_avg) / 3,
+    
+    #  pulse pressure
+    pulse_pressure = sys_bp_avg - dia_bp_avg
+  )
+```
+
+
+```{r saving data, include = FALSE, echo = FALSE}
+# Save final dataset with composite variables
+saveRDS(all_data, "nhanes_merged_data_2011_2014_with_composites.rds")
+write.csv(all_data, "nhanes_merged_data_2011_2014_with_composites.csv", row.names = FALSE)
+
+# FINAL SUMMARY 
+cat("\n=== FINAL DATA SUMMARY ===\n")
+cat("Total participants:", nrow(all_data), "\n")
+cat("Participants with complete cognitive data:", sum(complete.cases(all_data[c("memory_comp1", "cognitive_comp1")])), "\n")
+cat("Participants with complete iron data:", sum(complete.cases(all_data[c("systemic_iron_comp1", "overall_iron_status1")])), "\n")
+cat("Participants with complete choline data:", sum(complete.cases(all_data["total_choline"])), "\n")
+
+```
+
+```{r data exclusion criteria}
+# DATA EXCLUSION CRITERIA 
+# Load dataset
+if (!exists("all_data")) {
+  all_data <- readRDS("nhanes_merged_data_2011_2014_with_composites.rds")
+}
+
+# five-year age intervals
+all_data <- all_data %>%
+  mutate(
+    age_group = cut(Age, 
+                   breaks = seq(60, 100, by = 5),
+                   labels = c("60-64", "65-69", "70-74", "75-79", "80-84", "85-89", "90-94", "95-99"),
+                   include.lowest = TRUE, right = FALSE)
+  )
+
+# Categorize BMI
+all_data <- all_data %>%
+  mutate(
+    BMI_category = case_when(
+      BMI < 18 ~ "Underweight",
+      BMI >= 18 & BMI < 25 ~ "Normal weight",
+      BMI >= 25 & BMI < 30 ~ "Overweight",
+      BMI >= 30 ~ "Obese",
+      TRUE ~ NA_character_
+    )
+  )
+
+# Categorize PIR (poverty/income ratio) 
+all_data <- all_data %>%
+  mutate(
+    PIR_category = case_when(
+      PIR %in% c(77, 99) ~ NA_character_,  # refused/don't know as missing
+      PIR <= 1 ~ "Low income",
+      PIR > 1 & PIR <= 1.85 ~ "Moderate income",
+      PIR > 1.85 ~ "High income",
+      TRUE ~ NA_character_
+    ),
+    # factor with ordered levels
+    PIR_category = factor(PIR_category, 
+                         levels = c("Low income", "Moderate income", "High income"),
+                         ordered = TRUE)
+  )
+
+# PIR special codes
+pir_special_codes <- all_data %>%
+  summarise(
+    refused = sum(PIR == 77, na.rm = TRUE),
+    dont_know = sum(PIR == 99, na.rm = TRUE),
+    missing = sum(is.na(PIR)),
+    valid = sum(!is.na(PIR) & !PIR %in% c(77, 99))
+  )
+
+all_data <- all_data %>%
+mutate(
+     avg_total_calories = rowMeans(cbind(total_calories_d1, total_calories_d2), na.rm = TRUE)
+   )
+
+# Apply exclusion criteria
+filtered_data <- all_data %>%
+  filter(
+    # Age 60+ only
+    Age >= 60,
+    
+    # Complete data for required variables
+    !is.na(Age) & !is.na(Gender) & !is.na(BMI) & 
+    !is.na(Ethnicity_NHA) & !is.na(PIR) & !is.na(Edn_level) &
+    !is.na(total_choline) & !is.na(composite_fe_intake) &
+    !is.na(composite_depression) & !is.na(stroke_diag) & 
+    !is.na(hbp_diag) & !is.na(smoking_status) & !is.na(drinking_freq) &
+    !is.na(diabetes_status),
+    
+    # Exclude underweight (BMI < 18)
+    BMI >= 18,
+    
+    # Exclude extreme dietary consumption
+    # (male: < 500 or > 8,000 kcal/d; female: < 500 or > 5000 kcal)
+    !(Gender == "Male" & (avg_total_calories < 500 | avg_total_calories > 8000)) &
+    !(Gender == "Female" & (avg_total_calories < 500 | avg_total_calories > 5000))
+  )
+
+# tertiles for iron and choline variables
+filtered_data <- filtered_data %>%
+  mutate(
+    # Tertiles for iron variables
+    iron_biomarker_tertile = ntile(systemic_iron_comp1, 3),
+    iron_intake_tertile = ntile(composite_fe_intake, 3),
+    iron_combined_tertile = ntile(overall_iron_status1, 3),
+    
+    # Tertiles for choline variables
+    choline_intake_tertile = ntile(total_choline, 3),
+    
+    # Label tertiles
+    iron_biomarker_group = case_when(
+      iron_biomarker_tertile == 1 ~ "Low",
+      iron_biomarker_tertile == 2 ~ "Medium",
+      iron_biomarker_tertile == 3 ~ "High"
+    ),
+    
+    iron_intake_group = case_when(
+      iron_intake_tertile == 1 ~ "Low",
+      iron_intake_tertile == 2 ~ "Medium",
+      iron_intake_tertile == 3 ~ "High"
+    ),
+    
+    iron_combined_group = case_when(
+      iron_combined_tertile == 1 ~ "Low",
+      iron_combined_tertile == 2 ~ "Medium",
+      iron_combined_tertile == 3 ~ "High"
+    ),
+    
+    choline_intake_group = case_when(
+      choline_intake_tertile == 1 ~ "Low",
+      choline_intake_tertile == 2 ~ "Medium",
+      choline_intake_tertile == 3 ~ "High"
+    )
+  )
+
+# Convert to factors
+filtered_data <- filtered_data %>%
+  mutate(
+    iron_biomarker_group = factor(iron_biomarker_group, levels = c("Low", "Medium", "High")),
+    iron_intake_group = factor(iron_intake_group, levels = c("Low", "Medium", "High")),
+    iron_combined_group = factor(iron_combined_group, levels = c("Low", "Medium", "High")),
+    choline_intake_group = factor(choline_intake_group, levels = c("Low", "Medium", "High"))
+  )
+
+# Save filtered dataset
+saveRDS(filtered_data, "nhanes_filtered_data_2011_2014.rds")
+write.csv(filtered_data, "nhanes_filtered_data_2011_2014.csv", row.names = FALSE)
+
+# Report on exclusions
+cat("DATA EXCLUSION REPORT \n")
+cat("Original sample size:", nrow(all_data %>% filter(Age >= 60)), "\n")
+cat("Final sample size after exclusions:", nrow(filtered_data), "\n")
+cat("Percentage retained:", round(nrow(filtered_data) / nrow(all_data %>% filter(Age >= 60)) * 100, 1), "%\n")
+
+```
+
+```{r baseline descriptives}
+
+#--Tertile distributions--
+iron_biomarker_tertile_table <- age_60plus %>%
+  count(iron_biomarker_group) %>%
+  mutate(Percentage = round(n / nrow(age_60plus) * 100, 1))
+
+iron_intake_tertile_table <- age_60plus %>%
+  count(iron_intake_group) %>%
+  mutate(Percentage = round(n / nrow(age_60plus) * 100, 1))
+
+iron_combined_tertile_table <- age_60plus %>%
+  count(iron_combined_group) %>%
+  mutate(Percentage = round(n / nrow(age_60plus) * 100, 1))
+
+choline_tertile_table <- age_60plus %>%
+  count(choline_intake_group) %>%
+  mutate(Percentage = round(n / nrow(age_60plus) * 100, 1))
+
+print(kable(iron_biomarker_tertile_table, caption = "Distribution by Iron Biomarker Tertiles"))
+print(kable(iron_intake_tertile_table, caption = "Distribution by Iron Intake Tertiles"))
+print(kable(iron_combined_tertile_table, caption = "Distribution by Combined Iron Tertiles"))
+print(kable(choline_tertile_table, caption = "Distribution by Choline Intake Tertiles"))
+
+
+#--DESCRIPTIVE STATISTICS AND DISTRIBUTION ANALYSIS --
+library(ggplot2)
+install.packages("gridExtra")
+library(gridExtra)
+library(psych)
+library(moments)
+
+# Install required packages if needed
+if (!require("e1071")) install.packages("e1071") 
+if (!require("scales")) install.packages("scales")  
+library(e1071)
+library(scales)
+
+# Load dataset with composites
+if (!exists("all_data")) {
+  all_data <- readRDS("nhanes_filtered_data_2011_2014.rds")
+}
+
+# Focus on participants 60+ (should already be filtered but just in case)
+age_60plus <- all_data %>% filter(Age >= 60)
+
+# --Baseline Descriptives/CHARACTERISTICS--
+library(dplyr)
+library(gtsummary)
+
+# summarize baseline variables by group
+create_baseline_table <- function(data, group_var, exclude_vars = NULL) {
+  
+  vars_to_include <- setdiff(
+    names(data),
+    c(group_var, exclude_vars)
+  )
+  
+  #  gtsummary for pretty baseline summaries
+  tbl <- data %>%
+    select(all_of(c(group_var, vars_to_include))) %>%
+    tbl_summary(
+      by = all_of(group_var),
+      statistic = list(
+        all_continuous() ~ "{mean} ({sd})",
+        all_categorical() ~ "{n} ({p}%)"
+      ),
+      digits = all_continuous() ~ 1
+    ) %>%
+    add_overall() %>%
+    bold_labels()
+  
+  return(tbl)
+}
+iron_related_vars <- c(
+  "systemic_iron_comp1", "systemic_iron_comp2", 
+  "dietary_iron_avg", "dietary_vitC_avg", "dietary_iron_index",
+  "supp_iron_avg", "supp_vitC_avg", "supp_iron_index",
+  "composite_fe_intake", "overall_iron_status1", "overall_iron_status2"
+)
+
+choline_related_vars <- c(
+  "total_choline", "choline_diet_comb", "choline_supp_d1", "choline_supp_d2", "choline_supp_comb"
+)
+# Iron biomarker quartiles
+iron_biomarker_summary <- create_baseline_table(
+  data = age_60plus,
+  group_var = "iron_biomarker_group",
+  exclude_vars = iron_related_vars
+)
+
+# Iron intake quartiles
+iron_intake_summary <- create_baseline_table(
+  data = age_60plus,
+  group_var = "iron_intake_group",
+  exclude_vars = iron_related_vars
+)
+
+# Combined iron quartiles
+iron_combined_summary <- create_baseline_table(
+  data = age_60plus,
+  group_var = "iron_combined_group",
+  exclude_vars = iron_related_vars
+)
+
+# Choline quartiles
+choline_summary <- create_baseline_table(
+  data = age_60plus,
+  group_var = "choline_intake_group",
+  exclude_vars = choline_related_vars
+)
+
+age_60plus <- age_60plus %>%
+  mutate(iron_choline_group = paste0(iron_combined_group, "_", choline_intake_group))
+iron_choline_summary <- create_baseline_table(
+  data = age_60plus,
+  group_var = "iron_choline_group",
+  exclude_vars = c(iron_related_vars, choline_related_vars)
+)
+
+age_60plus %>%
+  count(iron_biomarker_group) %>%
+  mutate(Percentage = round(100 * n / nrow(age_60plus), 1))
+
+iron_biomarker_summary
+iron_intake_summary
+iron_combined_summary
+choline_summary
+iron_choline_summary
+
+as_flex_table(iron_biomarker_summary)
+
+```
+
+```{r multiple/weighted logistic regression and model diagnostics}
+# install.packages(c("broom", "dplyr", "purrr", "pROC", "car", "ResourceSelection", "survey", "gtsummary"))
+
+library(dplyr)
+library(purrr)
+library(broom)
+library(pROC)
+library(car)                 # vif
+library(ResourceSelection)   # hoslem.test
+library(survey)
+library(gtsummary)           
+
+# dataset to use 
+df <- age_60plus  
+# exposures to iterate
+exposures <- c("iron_biomarker_group", "iron_intake_group", "iron_combined_group", "choline_intake_group")
+
+# outcomes (binary impairment indicators created)
+outcomes <- c("mild_memory_impair", "mild_cognitive_impair")  
+
+# Covariate sets
+cov_clinical <- c("BMI", "diabetes_status", "stroke_diag", "hbp_diag")
+cov_demog    <- c("Age", "Gender", "Ethnicity_NHA", "Edn_level", "PIR")
+cov_behavior <- c("walk_bike_min", "vigorous_min", "moderate_min", "sleep_hrs", "sys_bp_avg", "dia_bp_avg")
+
+# models as formulas (strings)
+model_formulas <- list(
+  ModelA = function(e, y) paste0(y, " ~ ", e),                                      # unadjusted
+  ModelB = function(e, y) paste0(y, " ~ ", e, " + ", paste(cov_clinical, collapse = " + ")),
+  ModelC = function(e, y) paste0(y, " ~ ", e, " + ", paste(c(cov_clinical, cov_demog), collapse = " + ")),
+  ModelD = function(e, y) paste0(y, " ~ ", e, " + ", paste(c(cov_clinical, cov_demog, cov_behavior), collapse = " + "))
+)
+
+# a survey weight variable if present??
+possible_weights <- c("WTMEC2YR", "WTINT2YR", "WTMEC4YR", "WTMEC6YR", "WTMEC8YR", "WTDR4YR")
+wt_var <- intersect(possible_weights, names(df)) %>% .[1]
+
+if (!is.na(wt_var) && length(wt_var) > 0) {
+  message("Using weight variable: ", wt_var)
+  # Create a simple svydesign (note: for pooled cycles should compute appropriate weights e.g., combine 2-year weights and adjust)
+  svy <- svydesign(id = ~SDMVPSU, strata = ~SDMVSTRA, weights = as.formula(paste0("~", wt_var)), data = df, nest = TRUE)
+  use_survey <- TRUE
+} else {
+  message("No common NHANES weight variable found in dataset. Running unweighted GLMs. Set use_survey <- FALSE to skip survey models.")
+  use_survey <- FALSE
+}
+
+# helper to set refs
+df <- df %>%
+  mutate(
+    iron_biomarker_group = factor(iron_biomarker_group, levels = c("Low", "Medium", "High")),  # if you used Low/Med/High
+    iron_intake_group = factor(iron_intake_group, levels = c("Low", "Medium", "High")),
+    iron_combined_group = factor(iron_combined_group, levels = c("Low", "Medium", "High")),
+    choline_intake_group = factor(choline_intake_group, levels = c("Low", "Medium", "High"))
+  )
+
+# If tertile labels differ (1,2,3), adjust; choline ref = "High" 
+df$choline_intake_group <- relevel(df$choline_intake_group, ref = "High")
+
+# Recreate survey design 
+if (use_survey) {
+  svy <- update(svy, data = df)
+}
+
+
+results_list <- list()
+
+for (y in outcomes) {
+  for (e in exposures) {
+    for (mname in names(model_formulas)) {
+      fmla <- as.formula(model_formulas[[mname]](e, y))
+      key <- paste(y, e, mname, sep = " | ")
+      cat("Fitting:", key, "\n")
+      
+      #  unweighted logistic (glm)
+      glm_fit <- tryCatch(
+        glm(fmla, data = df, family = binomial(link = "logit")),
+        error = function(e) { warning("GLM failed: ", e); return(NULL) }
+      )
+      
+      #  GLM results
+      if (!is.null(glm_fit)) {
+        tidy_glm <- broom::tidy(glm_fit, conf.int = TRUE, exponentiate = TRUE) %>%
+          mutate(model = key, method = "glm")
+        
+        # AUC
+        preds <- predict(glm_fit, type = "response")
+        roc_obj <- tryCatch(roc(df[[y]] ~ preds, quiet = TRUE), error = function(e) NULL)
+        auc_val <- if (!is.null(roc_obj)) as.numeric(auc(roc_obj)) else NA_real_
+        
+        # Hosmer-Lemeshow (needs grouping;  10 groups)
+        hl_p <- tryCatch(
+          hoslem.test(as.numeric(df[[y]]), fitted(glm_fit), g = 10)$p.value,
+          error = function(e) NA_real_
+        )
+        
+        # vif ( for numeric multicollinearity)
+        vif_vals <- tryCatch(vif(glm_fit), error = function(e) NA)
+        
+        results_list[[key]] <- list(
+          glm_tidy = tidy_glm,
+          glm_fit = glm_fit,
+          auc = auc_val,
+          hoslem_p = hl_p,
+          vif = vif_vals
+        )
+      }
+      
+      # survey-weighted logistic if possible
+      if (use_survey) {
+        svy_fit <- tryCatch(
+          svyglm(fmla, design = svy, family = quasibinomial()), # quasibinomial often used in survey context
+          error = function(e) { warning("svyglm failed: ", e); return(NULL) }
+        )
+        if (!is.null(svy_fit)) {
+          tidy_svy <- broom::tidy(svy_fit, conf.int = TRUE, exponentiate = TRUE) %>% 
+            mutate(model = key, method = "svyglm")
+          
+          #  AUC with survey predictions, compute predictions using svy_fit$data
+          preds_svy <- predict(svy_fit, type = "response")
+          roc_svy <- tryCatch(roc(svy_fit$y ~ preds_svy, quiet = TRUE), error = function(e) NULL)
+          auc_svy <- if (!is.null(roc_svy)) as.numeric(auc(roc_svy)) else NA_real_
+          
+          results_list[[paste(key, "survey", sep = " | ")]] <- list(
+            svy_tidy = tidy_svy,
+            svy_fit = svy_fit,
+            auc = auc_svy
+            # many diagnostics like HL test are less straightforward for survey models
+          )
+        }
+      } # end if use_survey
+    } # end models loop
+  } # end exposures loop
+} # end outcomes loop
+
+
+#  tidy results into one data.frame (GLM only)
+all_tidy <- map_dfr(results_list, function(x) {
+  if (!is.null(x$glm_tidy)) return(x$glm_tidy)
+  if (!is.null(x$svy_tidy)) return(x$svy_tidy)
+  return(NULL)
+}, .id = "key")
+
+# Keep only exposure rows (drop intercept)
+all_tidy <- all_tidy %>% filter(term != "(Intercept)")
+
+# Select and format
+or_table <- all_tidy %>%
+  transmute(
+    model = model,
+    method = method,
+    term = term,
+    OR = estimate,
+    CI_lower = conf.low,
+    CI_upper = conf.high,
+    p.value = p.value
+  )
+
+head(or_table, 40)
+
+
+# Choose result
+example_key <- names(results_list)[1]
+example <- results_list[[example_key]]
+
+# GLM diagnostics
+if (!is.null(example$glm_fit)) {
+  glm_fit <- example$glm_fit
+  
+  # 1) AUC
+  preds <- predict(glm_fit, type = "response")
+  roc_obj <- roc(df[[outcomes[1]]] ~ preds)  # change outcome if needed
+  print(auc(roc_obj))
+  plot(roc_obj, main = paste("ROC:", example_key))
+  
+  # 2) Hosmer-Lemeshow
+  print(hoslem.test(as.numeric(df[[outcomes[1]]]), fitted(glm_fit), g = 10))
+  
+  # 3) VIF
+  print(vif(glm_fit))
+  
+  # 4) Calibration plot (observed vs predicted by deciles)
+  df$pred_prob <- preds
+  df$decile <- ntile(df$pred_prob, 10)
+  calib <- df %>%
+    group_by(decile) %>%
+    summarise(mean_pred = mean(pred_prob, na.rm = TRUE),
+              obs = mean(as.numeric(!!rlang::sym(outcomes[1])), na.rm = TRUE),
+              n = n())
+  print(calib)
+  plot(calib$mean_pred, calib$obs, xlab = "Mean predicted", ylab = "Observed", main = paste("Calibration:", example_key))
+  abline(0,1, col = "red")
+}
+
+df %>% group_by(iron_biomarker_group) %>% summarise(n = n(), events = sum(mild_memory_impair, na.rm = TRUE))
+
+
+```
+
