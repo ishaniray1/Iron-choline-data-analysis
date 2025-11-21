@@ -22,6 +22,8 @@ These datasets were harmonized and processed to evaluate nutritional biomarkers,
 - Variable construction (iron biomarkers, choline intake levels, cognition scores)
 - Statistical modeling functions
 
+## Ongoing Work
+  
 ## Research Objective
 To examine whether interactions between **iron biomarkers** , **dietary iron intake**  and **dietary choline intake** are associated with **cognitive performance** in older adults, using complementary population cohorts.
 
